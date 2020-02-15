@@ -18,6 +18,8 @@ from sklearn import decomposition
 from IPython import get_ipython
 get_ipython().run_line_magic('matplotlib', 'qt')
 
+CurrentTime = time.time()
+
 df = pd.read_csv('Changing_data.csv')
 data = pd.DataFrame()
 '''Замена символов на коды в ценовом диапазоне'''
@@ -86,6 +88,8 @@ data = df.loc[:,list_data]
 col = list(data.columns)
 for colname in col:
     data[colname+'_isNAN'] = pd.isna(data[colname]).astype('uint8')
+
+data['Ranking norm round'] = data['Ranking norm'].apply(lambda x: round(x, 1))
     
 data['Rank1 norm'] = data['Rank1 norm'].fillna(data['Ranking norm'])
 data['Rank2 norm'] = data.groupby('City')['Rank2 norm'].transform(lambda x: x.fillna(x.mean()))
@@ -94,11 +98,18 @@ data['Num cuisines in City'] = data.groupby('City')['Num cuisines in City'].tran
 data['Number of Reviews'] = data['Number of Reviews'].fillna(0)
 data['Pars Num of Reviews'] = data['Pars Num of Reviews'].fillna(0)
 data['Pars Num Foto'] = data['Pars Num Foto'].fillna(0)
-data['Pars Excellent'] = data['Pars Excellent'].fillna(0)
-data['Pars Good'] = data['Pars Good'].fillna(0)
-data['Pars Average'] = data['Pars Average'].fillna(0)
-data['Pars Poor'] = data['Pars Poor'].fillna(0)
-data['Pars Terible'] = data['Pars Terible'].fillna(0)
+
+data['Pars Excellent'] = data.groupby('Ranking norm round')['Pars Excellent'].transform(lambda x: x.fillna(x.mean()))
+data['Pars Good'] = data.groupby('Ranking norm round')['Pars Good'].transform(lambda x: x.fillna(x.mean()))
+data['Pars Average'] = data.groupby('Ranking norm round')['Pars Average'].transform(lambda x: x.fillna(x.mean()))
+data['Pars Poor'] = data.groupby('Ranking norm round')['Pars Poor'].transform(lambda x: x.fillna(x.mean()))
+data['Pars Terible'] = data.groupby('Ranking norm round')['Pars Terible'].transform(lambda x: x.fillna(x.mean()))
+
+#data['Pars Excellent'] = data['Pars Excellent'].fillna(0)
+#data['Pars Good'] = data['Pars Good'].fillna(0)
+#data['Pars Average'] = data['Pars Average'].fillna(0)
+#data['Pars Poor'] = data['Pars Poor'].fillna(0)
+#data['Pars Terible'] = data['Pars Terible'].fillna(0)
 
 
 data['Delta Rank'] = data['Rank1 norm'] - data['Ranking norm']
@@ -111,13 +122,9 @@ data['Meanmark'] = data[['Pars Excellent','Pars Good','Pars Average','Pars Poor'
 data.info()
 decr = data.describe()
 
-#df = df.drop(list_data, axis = 1)
-
-
 col = list(df.columns)
 ind1 = col.index('Rev1 mark')
 
-#CurrentTime = time.time()
 c = 30
 m = []
 for i in range(len(df)): 
@@ -125,20 +132,23 @@ for i in range(len(df)):
      
 col = col[ind1:ind1+c]
 
-nlist = [0 for x in range(c)]     
 for i in range(len(m)):
     if pd.isnull(m[i][1]):
-        m[i] = nlist
         continue
     for j in range(c):
          if pd.isnull(m[i][j]) and j >= 3:
              m[i][j] = m[i][j-3]
 
 df_date = pd.DataFrame(m, columns = col)
+df_date['Ranking norm round'] = data['Ranking norm'].apply(lambda x: round(x, 1))
 today = pd.to_datetime('today')
-for i in range(len(col)):
+for i in range(len(col)):    
     if (i - 1) % 3 == 0:
         df_date.iloc[:,i] = df_date.iloc[:,i].apply(lambda x: (today - pd.to_datetime(x)).days)
+    df_date[col[i]] = df_date.groupby('Ranking norm round')[col[i]].transform(lambda x: x.fillna(x.median()))
+
+
+df_date = df_date.drop('Ranking norm round', axis = 1)
 
 '''Функция подсчета рейтинга по отзывам с эффектом уменьшения веса по мере устаревания
 Функцию устаревания по хорошему нужно подбирать оптимизацией. Пока взял по аналогии с каглом'''
@@ -154,7 +164,7 @@ def rating_by_rev(x):
 df_date['rating_by_rev'] = df_date.apply(rating_by_rev, axis = 1)
 
 data = pd.concat([data, df_date], axis = 1, sort = False)        
-#print(time.time() - CurrentTime)
+
 
 '''Создание признаков dummy variables'''
 data = pd.concat([data, pd.get_dummies(df['City'])], axis=1, sort=False)
@@ -164,9 +174,6 @@ data_train = data[data['Rating'] > 0]
 data_test = data[data['Rating'] == 0]
 
 iskl = ['Rating','Restaurant_id','City','Country']
-#data_train = data_train.drop(iskl, axis = 1)
-
-
 
 
 X = data_train.drop(iskl, axis = 1)
@@ -174,7 +181,7 @@ y = data_train['Rating']
 
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25)
-regr = RandomForestRegressor(n_estimators=100, n_jobs=-1)
+regr = RandomForestRegressor(n_estimators=100, n_jobs=-1, random_state=42)
 regr.fit(X_train, y_train)
 y_pred = regr.predict(X_test)
 
@@ -183,11 +190,9 @@ fi = pd.DataFrame({'feature': list(X.columns),
                    'importance': regr.feature_importances_}).\
                     sort_values('importance', ascending = False)
 
-data_for_kaggle = data_test['Restaurant_id']
-data_test = data_test.drop(iskl, axis = 1)
+print(time.time() - CurrentTime)
 
-pred_test = regr.predict(data_test)
-
+#'''Задел на будущее по сокращению размерности, практически без потери точности'''
 #best_pars = ['Meanmark','Ranking norm','Number of Reviews','Delta Rank','rating_by_rev',
 #             'Rev1 date','Rank1 norm']
 #X_ = X[best_pars]
@@ -203,12 +208,20 @@ pred_test = regr.predict(data_test)
 #    regr.fit(X_train, y_train)
 #    y_pred.append(regr.predict(X_test))
 #    
-#    print('MAE:', metrics.mean_absolute_error(y_test, y_pred[i]))
+#    print('MAE:', metrics.mean_absolute_error(y_test, y_pred[:][i]))
 #
 #print('MAE:', metrics.mean_absolute_error(y_test, np.mean(y_pred)))
 
                     
-                    
+data_for_kaggle = data_test['Restaurant_id']
+data_test = data_test.drop(iskl, axis = 1)
+
+pred_test = regr.predict(data_test)
+
+pred_test_df = pd.DataFrame(pred_test, columns = ['Rating'])
+data_for_kaggle = pd.concat([data_for_kaggle, pred_test_df], axis=1, sort=False)
+
+data_for_kaggle.to_csv('Submission.csv', index = False)                    
                     
                     
                     
